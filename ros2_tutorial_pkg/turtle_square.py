@@ -4,7 +4,6 @@ import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from turtlesim.msg import Pose
-from turtlesim.srv import TeleportAbsolute, SetPen
 from std_msgs.msg import Float32MultiArray
 
 
@@ -18,7 +17,7 @@ class TurtleSquare(Node):
 
     # Tuning constants (works well with turtlesim's physics)
     LINEAR_SPEED = 1.0  # m/s
-    ANGULAR_SPEED = 0.0  # rad/s  (π/2 ÷ ~1.75 s ≈ 90 °)
+    ANGULAR_SPEED = 0.9  # rad/s  (π/2 ÷ ~1.75 s ≈ 90 °)
     SIDE_DURATION = 2.0  # seconds per straight segment
     TURN_DURATION = math.pi / 2.0 / ANGULAR_SPEED  # ≈1.75 s per 90° turn
 
@@ -41,23 +40,26 @@ class TurtleSquare(Node):
         self._phase = "drive"  # 'drive' | 'turn'
         self._phase_start: float | None = None
         self._sides_done = 0
-        self._current_pose: Pose
+        self._current_pose = Pose()
 
         # Small timer driving the state machine at 20 Hz
         self.create_timer(0.05, self._step)
         self.get_logger().info(f"TurtleSquare started — side length ≈ {side} units")
 
         # Variables to calculate the trajectory to another point
-        self._target_x = None
-        self._target_y = None
+        self._target_x = 0
+        self._target_y = 0
         self._target_distance = None
-        self._target_angle = None
+        self._target_angle = 0
 
     # ------------------------------------------------------------------
     def _pose_cb(self, msg: Pose):
         self._current_pose = msg
 
     def _calculate_distance_callback(self, msg: Float32MultiArray):
+        self.get_logger().info(
+            f"Received target coordinates: x={msg.data[0]}, y={msg.data[1]}"
+        )
         self._target_x = msg.data[0]
         self._target_y = msg.data[1]
         p = self._current_pose
@@ -65,36 +67,45 @@ class TurtleSquare(Node):
         dif_y = self._target_y - p.y
         self._target_distance = math.sqrt(dif_x**2 + dif_y**2)
         self._target_angle = math.atan2(dif_y, dif_x)
+        self._phase = "rotate"
 
     def _step(self):
         if self._target_distance is None:
             return
 
         now = self.get_clock().now().nanoseconds * 1e-9
-
         if self._phase_start is None:
             self._phase_start = now
 
-        elapsed = now - self._phase_start
         twist = Twist()
 
-        drive_duration = self._target_distance / self.LINEAR_SPEED
+        if self._phase == "rotate":
+            angle_diff = self._target_angle - self._current_pose.theta
 
-        if self._phase == "drive":
+            angle_diff = math.atan2(math.sin(angle_diff), math.cos(angle_diff))
+
+            if abs(angle_diff) > 0.05:
+                twist.angular.z = self.ANGULAR_SPEED * (1.0 if angle_diff > 0 else -1.0)
+            else:
+                p = self._current_pose
+                dif_x = self._target_x - p.x
+                dif_y = self._target_y - p.y
+                self._target_distance = math.sqrt(dif_x**2 + dif_y**2)
+                self._phase = "drive"
+                self._phase_start = now
+
+        elif self._phase == "drive":
+            drive_duration = self._target_distance / self.LINEAR_SPEED
+            elapsed = now - self._phase_start
+
             if elapsed < drive_duration:
                 twist.linear.x = self.LINEAR_SPEED
             else:
-                self._phase = "turn"
-                self._phase_start = now
-                self._sides_done += 1
-                self.get_logger().info(f"Side {self._sides_done} done — turning 90°")
+                twist.linear.x = 0.0
+                self._phase = "idle"
 
-        elif self._phase == "turn":
-            if elapsed < self.TURN_DURATION:
-                twist.angular.z = self.ANGULAR_SPEED
-            else:
-                self._phase = "drive"
-                self._phase_start = now
+        elif self._phase == "idle":
+            pass
 
         self.cmd_pub.publish(twist)
 
