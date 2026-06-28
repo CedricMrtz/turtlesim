@@ -30,7 +30,9 @@ setup(
             "turtle_square     = ros2_tutorial_pkg.turtle_square:main",
             "turtle_pose_logger= ros2_tutorial_pkg.turtle_pose_logger:main",
             "coords_pub        = ros2_tutorial_pkg.coords_pub:main",
+            "coords_pub_gazebo = ros2_tutorial_pkg.gazebo.coords:main",
             "move_robot        = ros2_tutorial_pkg.gazebo.move:main",
+            "turtle_square_gazebo= ros2_tutorial_pkg.gazebo.turtle_square_gazebo:main",
         ],
     },
 )
